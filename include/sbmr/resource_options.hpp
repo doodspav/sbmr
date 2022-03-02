@@ -3,12 +3,14 @@
 
 
 #include <bit>
-#include <cassert>
 #include <compare>
 #include <cstddef>
 #include <limits>
 #include <ostream>
 #include <type_traits>
+#include <utility>
+
+#include <sbmr/_detail/assert.hpp>
 
 
 namespace sbmr {
@@ -72,8 +74,12 @@ namespace sbmr {
         [[nodiscard]] constexpr chunk_options
         normalized() const noexcept
         {
-            // pre-conditions
-            assert(valid());
+            // pre-conditions (equivalent to .valid())
+            // check non-zero separately for better diagnostics
+            SBMR_ASSERT_CONSTEXPR(block_size > 0);
+            SBMR_ASSERT_CONSTEXPR(block_count > 0);
+            SBMR_ASSERT_CONSTEXPR(std::has_single_bit(block_align));
+            SBMR_ASSERT_CONSTEXPR(_detail::valid_sizeof(block_size, block_count));
 
             // expand size to include padding
             auto size = block_align;
@@ -129,7 +135,7 @@ namespace sbmr {
 
 
     // provided in addition to .valid() (identical functionality)
-    // generates more informative error messages than `requires Opts.valid()`
+    // generates more informative diagnostics than `requires Opts.valid()`
     template <chunk_options Opts>
     concept ValidChunkOptions =
         Opts.block_size > 0 &&
