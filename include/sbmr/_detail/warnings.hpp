@@ -3,7 +3,7 @@
 
 
 // usable repeatably in all scopes without ODR violation
-#define SBMR_REQUIRE_SEMICOLON() static_assert(true);
+#define SBMR_REQUIRE_SEMICOLON() static_assert(true)
 
 
 // push and pop warnings
@@ -14,8 +14,8 @@
     #define SBMR_WARNINGS_PUSH() _Pragma("warning(push)")
     #define SBMR_WARNINGS_POP()  _Pragma("warning(pop)")
 #else
-    #define SBMR_WARNINGS_PUSH() SBMR_REQUIRE_SEMICOLON();
-    #define SBMR_WARNINGS_POP()  SBMR_REQUIRE_SEMICOLON();
+    #define SBMR_WARNINGS_PUSH() SBMR_REQUIRE_SEMICOLON()
+    #define SBMR_WARNINGS_POP()  SBMR_REQUIRE_SEMICOLON()
 #endif
 
 
