@@ -39,7 +39,10 @@ namespace sbmr::_impl {
             //   at compile time
 
             auto size = s_options.block_count;
-            for (auto& i : m_block_index_stack) { i = --size; }
+            for (auto& i : m_block_index_stack) {
+                // size-1 always fits in block_index_type
+                i = static_cast<block_index_type>(--size);
+            }
         }
 
         // memory resource should not be copyable or movable
@@ -68,7 +71,7 @@ namespace sbmr::_impl {
         static constexpr block_type s_zero_block {};
 
         // data members
-        block_count_type m_available_blocks = s_options.block_count;
+        block_count_type m_available_blocks = static_cast<block_count_type>(s_options.block_count);
         block_index_type m_block_index_stack[s_options.block_count];
         block_type m_blocks[s_options.block_count];
 
@@ -250,7 +253,7 @@ namespace sbmr::_impl {
 
         // perform an allocation (i.e. mark an available block as unavailable)
         // pre-conditions: m_available_blocks > 0
-        [[nodiscard, gnu::malloc, gnu::returns_nonnull]] constexpr block_type *
+        [[nodiscard, gnu::returns_nonnull]] constexpr block_type *
         obtain_ptr_unchecked() noexcept
         {
             SBMR_ASSERT_CONSTEXPR(m_available_blocks > 0);
@@ -266,7 +269,12 @@ namespace sbmr::_impl {
         constexpr void
         return_block_unchecked(std::ptrdiff_t index_index) noexcept
         {
-            SBMR_ASSERT_CONSTEXPR(index_index < s_options.block_count);
+            // conversion to avoid compiler complaining about comparison (<)
+            // block_count can always be represented by ptrdiff_t
+            // since we require that size * count can be too (and count != 0)
+            constexpr auto block_count = static_cast<std::ptrdiff_t>(s_options.block_count);
+
+            SBMR_ASSERT_CONSTEXPR(index_index < block_count);
             SBMR_ASSERT_CONSTEXPR(index_index >= m_available_blocks);
 
             auto *idx = stack_begin() + index_index;

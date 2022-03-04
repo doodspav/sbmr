@@ -22,7 +22,7 @@ namespace sbmr::_detail {
                  std::sentinel_for<Sen, It>      &&
                  std::sortable<It, Cmp>
     constexpr void
-    optimistic_sort(It it, const Sen& sen, Cmp cmp = {}) noexcept
+    optimistic_sort(It it, Sen sen, Cmp cmp = {}) noexcept
     {
         // check for empty range
         if (it == sen) { return; }
@@ -53,7 +53,6 @@ namespace sbmr::_detail {
 
 
 }  // namespace sbmr::_detail
-
 
 
 #endif  // SBMR_DETAIL_OPTIMISTIC_SORT_HPP
