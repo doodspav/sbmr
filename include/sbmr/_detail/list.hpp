@@ -257,6 +257,30 @@ namespace sbmr::_detail {
         {}
 
 
+        // Capacity
+
+        // checks whether the container is empty
+        [[nodiscard]] constexpr bool
+        empty() const noexcept
+        {
+            return size() == 0;
+        }
+
+        // returns the number of elements
+        [[nodiscard]] constexpr size_type
+        size() const noexcept
+        {
+            return m_size;
+        }
+
+        // returns the maximum possible number of elements
+        [[nodiscard]] constexpr size_type
+        max_size() const noexcept
+        {
+            return std::numeric_limits<size_type>::max();
+        }
+
+
         // Iterators
 
         // iterator pointing to first element, or end() if empty
