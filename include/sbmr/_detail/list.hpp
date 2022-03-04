@@ -158,9 +158,147 @@ namespace sbmr::_detail {
         // equality comparison with self
         // compiler will auto-generate operator!=
         [[nodiscard]] constexpr bool
-        operator==(const _list_iterator_crtp& other) const noexcept
+        operator==(const Derived& other) const noexcept
         {
             return m_node == other.m_node;
+        }
+    };
+
+
+    // constexpr replacement for std::list
+    // limited functionality to what's necessary for this library
+
+    template <class T, class Alloc = std::allocator<T>>
+        requires std::is_object_v<T>
+    class list
+    {
+    public:
+
+        // member types
+        using value_type       = T;
+        using allocator_type   = Alloc;
+        using size_type        = std::size_t;
+        using const_reference  = const T&;
+        using rvalue_reference = T&&;
+
+        // make iterator types opaque (rather than typedefs)
+        // gives more understandable error messages at compile time
+
+        struct iterator
+            : public _list_iterator_crtp<T, iterator, false>
+        {
+        private:
+            using base_type = _list_iterator_crtp<T, iterator, false>;
+            using typename base_type::node_pointer;
+
+            friend list;
+            friend struct const_iterator;
+
+            constexpr iterator(node_pointer node) noexcept
+                : base_type{node}
+            {}
+
+        public:
+            constexpr iterator() noexcept = default;
+        };
+
+        // const_iterator also gets to be constructible from iterator
+        // makes iterator comparable with const_iterator
+
+        struct const_iterator
+            : public _list_iterator_crtp<T, const_iterator, true>
+        {
+        private:
+            using base_type = _list_iterator_crtp<T, const_iterator, true>;
+            using typename base_type::node_pointer;
+
+            friend list;
+
+            constexpr const_iterator(node_pointer node) noexcept
+                : base_type{node}
+            {}
+
+        public:
+            constexpr const_iterator() noexcept = default;
+
+            constexpr const_iterator(iterator it) noexcept
+                : base_type{it.m_node}
+            {}
+        };
+
+    private:
+
+        // member types
+        using node_type = _list_node<T>;
+        using rebind_allocator_type   = typename std::allocator_traits<Alloc>::template rebind_alloc<node_type>;
+        using rebind_allocator_traits = typename std::allocator_traits<rebind_allocator_type>;
+
+        // data members
+        node_type *m_head = nullptr;
+        node_type *m_tail = nullptr;
+        size_type  m_size = 0;
+        [[no_unique_address]] rebind_allocator_type m_alloc;
+
+    public:
+
+        // Constructors - labelled according to std::list::list in cppreference
+
+        // (1) default constructor
+        constexpr list()
+            noexcept(std::is_nothrow_default_constructible_v<rebind_allocator_type>)
+            requires std::constructible_from<rebind_allocator_type>
+        {}
+
+        // (2) allocator constructor
+        constexpr explicit list(const Alloc& alloc)
+            noexcept(std::is_nothrow_constructible_v<rebind_allocator_type, const Alloc&>)
+            requires std::constructible_from<rebind_allocator_type, const Alloc&>
+            : m_alloc{alloc}
+        {}
+
+
+        // Iterators
+
+        // iterator pointing to first element, or end() if empty
+        [[nodiscard]] constexpr iterator
+        begin() noexcept
+        {
+            return iterator{m_head};
+        }
+
+        // const_iterator pointing to first element, or cend() if empty
+        [[nodiscard]] constexpr const_iterator
+        begin() const noexcept
+        {
+            return const_iterator{m_head};
+        }
+
+        // const_iterator pointing to first element, or cend() if empty
+        [[nodiscard]] constexpr const_iterator
+        cbegin() const noexcept
+        {
+            return const_iterator{m_head};
+        }
+
+        // iterator pointing to one-past-last element
+        [[nodiscard]] constexpr iterator
+        end() noexcept
+        {
+            return iterator{};
+        }
+
+        // const_iterator pointing to one-past-last element
+        [[nodiscard]] constexpr const_iterator
+        end() const noexcept
+        {
+            return const_iterator{};
+        }
+
+        // const_iterator pointing to one-past-last element
+        [[nodiscard]] constexpr const_iterator
+        cend() const noexcept
+        {
+            return const_iterator{};
         }
     };
 
