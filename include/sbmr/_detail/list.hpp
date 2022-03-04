@@ -178,6 +178,7 @@ namespace sbmr::_detail {
         using value_type       = T;
         using allocator_type   = Alloc;
         using size_type        = std::size_t;
+        using reference        = T&;
         using const_reference  = const T&;
         using rvalue_reference = T&&;
 
@@ -278,6 +279,41 @@ namespace sbmr::_detail {
         max_size() const noexcept
         {
             return std::numeric_limits<size_type>::max();
+        }
+
+
+        // Element access
+
+        [[nodiscard]] constexpr reference
+        front() noexcept
+        {
+            SBMR_ASSERT_CONSTEXPR(m_head != nullptr);
+
+            return m_head->value;
+        }
+
+        [[nodiscard]] constexpr const_reference
+        front() const noexcept
+        {
+            SBMR_ASSERT_CONSTEXPR(m_head != nullptr);
+
+            return m_head->value;
+        }
+
+        [[nodiscard]] constexpr reference
+        back() noexcept
+        {
+            SBMR_ASSERT_CONSTEXPR(m_tail != nullptr);
+
+            return m_tail->value;
+        }
+
+        [[nodiscard]] constexpr const_reference
+        back() const noexcept
+        {
+            SBMR_ASSERT_CONSTEXPR(m_tail != nullptr);
+
+            return m_tail->value;
         }
 
 
