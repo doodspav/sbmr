@@ -40,6 +40,8 @@ namespace sbmr::_impl {
 
             auto size = s_options.block_count;
             for (auto& i : m_block_index_stack) {
+
+                // explicit conversion to avoid compiler complaining
                 // size-1 always fits in block_index_type
                 i = static_cast<block_index_type>(--size);
             }
@@ -61,7 +63,7 @@ namespace sbmr::_impl {
 
         // member types
         using block_count_type = _detail::fast_nowrap_t<std::bit_width(s_options.block_count)>;
-        using block_index_type = _detail::least_unsigned_t<std::bit_width(s_options.block_count)>;
+        using block_index_type = _detail::least_unsigned_t<std::bit_width(s_options.block_count - 1u)>;
         using block_type = struct {
             alignas(s_options.block_align) std::byte arr[s_options.block_size];
         };
@@ -153,7 +155,7 @@ namespace sbmr::_impl {
             { return false; }
 
             auto *lo  = std::data(m_blocks);
-            auto *hi  = lo + sizeof(m_blocks);
+            auto *hi  = lo + s_options.block_count;
             auto *ptr = unknown_ptr;
 
             // use std::greater_equal and std::less for total ordering
@@ -172,13 +174,25 @@ namespace sbmr::_impl {
             if (std::is_constant_evaluated())
             {
                 // check if ptr matches any block's address
-                auto *it = std::data(m_blocks);
-
                 // use std::less_equal for total ordering
+
+                // check allocated blocks first (since this function is almost
+                //   exclusively called right before is_allocated())
+                auto *const mid = std::data(m_blocks) + m_available_blocks;
+                auto *it = mid;
                 for (; std::less_equal{}(it, unknown_ptr); ++it)
                 {
                     if (it == unknown_ptr) { return true; }
                 }
+
+                // check non-allocated blocks if above loop didn't return
+                it = std::data(m_blocks);
+                for (; it != mid && std::less_equal{}(it, unknown_ptr); ++it)
+                {
+                    if (it == unknown_ptr) { return true; }
+                }
+
+                // no blocks matched
                 return false;
             }
             else  // is_runtime_evaluated()
@@ -205,27 +219,33 @@ namespace sbmr::_impl {
                 // use std::less_equal for total ordering
                 for (; std::less_equal{}(it, owned_ptr); ++it, ++idx)
                 {
+                    // pre-conditions check
+                    SBMR_ASSERTM_CONSTEVAL(idx < s_options.block_count,
+                        "is_owned(ptr) not satisfied");
+
                     if (it == owned_ptr) { break; }
                 }
-
-                // pre-conditions check
-                SBMR_ASSERTM_CONSTEVAL(idx < m_available_blocks,
-                    "pre-conditions not met: is_owned(ptr) == true");
 
                 return idx;
             }
             else  // is_runtime_evaluated()
             {
                 auto *ptr = reinterpret_cast<const block_type *>(owned_ptr);
-                auto diff = ptr - std::data(m_blocks);
+                auto idiff = ptr - std::data(m_blocks);  // ptrdiff_t
+                auto udiff = static_cast<std::size_t>(idiff);
 
-                // pre-condition checks
-                SBMR_ASSERTM(diff >= 0,
-                    "pre-conditions not met: is_owned(ptr) == true");
-                SBMR_ASSERTM(diff > std::numeric_limits<block_index_type>::max(),
-                    "pre-conditions not met: is_owned(ptr) == true");
+                // pre-conditions checks
+                // signed to check non-negative
+                SBMR_ASSERTM(idiff >= 0,
+                    "is_owned(ptr) not satisfied");
+                // unsigned because block_index_type is also unsigned
+                SBMR_ASSERTM(udiff <= std::numeric_limits<block_index_type>::max(),
+                    "is_owned(ptr) not satisfied");
+                // unsigned because block_count is also unsigned
+                SBMR_ASSERTM(udiff < s_options.block_count,
+                    "is_owned(ptr) not satisfied");
 
-                return static_cast<block_index_type>(diff);
+                return static_cast<block_index_type>(udiff);
             }
         }
 
@@ -233,10 +253,12 @@ namespace sbmr::_impl {
         // returns index of block index if it is allocated, otherwise -1
         // return value should be treated as a token to be passed to de-allocator
         // function returns a token to minimize duplicated work in de-allocation
+        // return value is INVALIDATED upon call to any non-const member function
         // pre-conditions: is_owned(ptr) == true
         [[nodiscard]] constexpr std::ptrdiff_t
         is_allocated(const void *owned_ptr) const noexcept
         {
+            // block_index() checks our pre-conditions for us
             const auto idx = block_index(owned_ptr);
 
             // midpoint -> end is allocated blocks
@@ -256,26 +278,33 @@ namespace sbmr::_impl {
         [[nodiscard, gnu::returns_nonnull]] constexpr block_type *
         obtain_ptr_unchecked() noexcept
         {
-            SBMR_ASSERT_CONSTEXPR(m_available_blocks > 0);
+            // pre-conditions check
+            SBMR_ASSERTM_CONSTEXPR(m_available_blocks > 0,
+                "no blocks available");
 
             auto idx = m_block_index_stack[--m_available_blocks];
             return std::data(m_blocks) + idx;
         }
 
         // perform a de-allocation (i.e. mark an unavailable block as available)
-        // index_index should be the return value of is_allocated if not -1
-        // pre-condition: index_index >= m_available_blocks &&
-        //                index_index <  s_options.block_count
+        // index_index must be the valid return value of is_allocated if not -1
+        // pre-conditions: index_index >= m_available_blocks &&
+        //                 index_index <  s_options.block_count
         constexpr void
         return_block_unchecked(std::ptrdiff_t index_index) noexcept
         {
-            // conversion to avoid compiler complaining about comparison (<)
+            // explicit conversion to avoid compiler complaining
             // block_count can always be represented by ptrdiff_t
             // since we require that size * count can be too (and count != 0)
             constexpr auto block_count = static_cast<std::ptrdiff_t>(s_options.block_count);
 
-            SBMR_ASSERT_CONSTEXPR(index_index < block_count);
-            SBMR_ASSERT_CONSTEXPR(index_index >= m_available_blocks);
+            // pre-conditions checks
+            SBMR_ASSERTM_CONSTEXPR(index_index < block_count,
+                "token not obtained from is_allocated()");
+            SBMR_ASSERTM_CONSTEXPR(index_index >= 0,
+                "token not obtained from is_allocated()");
+            SBMR_ASSERTM_CONSTEXPR(index_index >= m_available_blocks,
+                "token likely invalidated by calling non-const member function after is_allocated()");
 
             auto *idx = stack_begin() + index_index;
             auto *mid = stack_midpoint();
