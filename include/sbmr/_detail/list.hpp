@@ -248,6 +248,10 @@ namespace sbmr::_detail {
             {}
         };
 
+        // reverse iterator types
+        using reverse_iterator = std::reverse_iterator<iterator>;
+        using const_reverse_iterator = std::reverse_iterator<const_iterator>;
+
     private:
 
         // member types
@@ -339,6 +343,7 @@ namespace sbmr::_detail {
         [[nodiscard]] constexpr allocator_type
         get_allocator() const
             noexcept(noexcept(allocator_type{m_alloc}))
+            requires requires { allocator_type{m_alloc}; }
         {
             return allocator_type{m_alloc};
         }
@@ -453,6 +458,48 @@ namespace sbmr::_detail {
         cend() const noexcept
         {
             return const_iterator{};
+        }
+
+        // reverse_iterator pointing to last element, or rend() if empty
+        [[nodiscard]] constexpr reverse_iterator
+        rbegin() noexcept
+        {
+            return reverse_iterator{end()};
+        }
+
+        // const_reverse_iterator pointing to last element, or crend() if empty
+        [[nodiscard]] constexpr const_reverse_iterator
+        rbegin() const noexcept
+        {
+            return const_reverse_iterator{cend()};
+        }
+
+        // const_reverse_iterator pointing to last element, or crend() if empty
+        [[nodiscard]] constexpr const_reverse_iterator
+        crbegin() const noexcept
+        {
+                return rbegin();
+        }
+
+        // reverse_iterator pointing to one-before-first element
+        [[nodiscard]] constexpr reverse_iterator
+        rend() noexcept
+        {
+            return reverse_iterator{begin()};
+        }
+
+        // const_reverse_iterator pointing to one-before-first element
+        [[nodiscard]] constexpr const_reverse_iterator
+        rend() const noexcept
+        {
+            return const_reverse_iterator{cbegin()};
+        }
+
+        // const_reverse_iterator pointing to one-before-first element
+        [[nodiscard]] constexpr const_reverse_iterator
+        crend() const noexcept
+        {
+            return rend();
         }
 
 
@@ -631,6 +678,7 @@ namespace sbmr::_detail {
         }
 
         // (2) removes the elements in the range [first, last)
+        // returns ++pos if pos is not end(), otherwise end()
         // returns last
         constexpr iterator
         erase(const_iterator first, const_iterator last) noexcept
