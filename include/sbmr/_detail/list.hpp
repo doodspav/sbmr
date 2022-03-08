@@ -8,6 +8,7 @@
 #include <limits>
 #include <memory>
 #include <type_traits>
+#include <utility>
 
 #include <sbmr/_detail/assert.hpp>
 
@@ -68,6 +69,7 @@ namespace sbmr::_detail {
     {
         // we need to friend ourselves for templated comparison operators
         template <class T_, class Derived_, bool is_const_>
+            requires std::is_object_v<T_>
         friend class _list_iterator_crtp;
 
     public:
@@ -300,9 +302,16 @@ namespace sbmr::_detail {
             rebind_allocator_traits::deallocate(m_alloc, node, 1);
         }
 
+        // helper function to explicitly convert const_iterator to iterator
+        [[nodiscard]] constexpr iterator
+        unconst_iterator(const_iterator it) noexcept
+        {
+            return iterator{const_cast<node_type *>(it.m_node)};
+        }
+
     public:
 
-        // Constructors - labelled according to std::list::list in cppreference
+        // Constructors (and destructor)
 
         // (1) default constructor
         constexpr list()
@@ -321,6 +330,17 @@ namespace sbmr::_detail {
         constexpr ~list() noexcept
         {
             clear();
+        }
+
+
+        // Allocator
+
+        // returns a copy of the associated allocator (non-rebound)
+        [[nodiscard]] constexpr allocator_type
+        get_allocator() const
+            noexcept(noexcept(allocator_type{m_alloc}))
+        {
+            return allocator_type{m_alloc};
         }
 
 
@@ -447,7 +467,7 @@ namespace sbmr::_detail {
             noexcept(noexcept(new_node(std::forward<Args>(args)...)))
         {
             // valid as long as we own it since emplace isn't const
-            auto* pos_node = const_cast<node_type *>(pos.m_node);
+            auto* pos_node = unconst_iterator(pos).m_node;
 
             // construct our new node
             auto *node = new_node(std::forward<Args>(args)...);
@@ -514,7 +534,77 @@ namespace sbmr::_detail {
             return back();
         }
 
-        // removes the element at pos
+        // (1) copy inserts value before pos
+        // returns iterator to new element
+        constexpr iterator
+        insert(const_iterator pos, const T& value)
+            noexcept(noexcept(emplace(pos, value)))
+            requires std::constructible_from<T, const T&>
+        {
+            return emplace(pos, value);
+        }
+
+        // (2) move inserts value before pos
+        // returns iterator to new element
+        constexpr iterator
+        insert(const_iterator pos, T&& value)
+            noexcept(noexcept(emplace(pos, std::move(value))))
+            requires std::constructible_from<T, T&&>
+        {
+            return emplace(pos, std::move(value));
+        }
+
+        // (3) inserts count copies of value before pos
+        // returns iterator to first element inserted, or pos if count == 0
+        constexpr iterator
+        insert(const_iterator pos, size_type count, const T& value)
+            noexcept(noexcept(emplace(pos, value)))
+            requires std::constructible_from<T, const T&>
+        {
+            // no elements
+            if (count == 0) { return unconst_iterator(pos); }
+
+            // first element (to get return value)
+            auto ret = emplace(pos, value);
+
+            // remaining elements
+            for (size_type i = 1; i < count; ++i) { emplace(pos, value); }
+
+            return ret;
+        }
+
+        // (4) inserts elements from range [first, last) before pos
+        // returns iterator to first element inserted, or pos if first == last
+        template <std::input_iterator InputIt>
+        constexpr iterator
+        insert(const_iterator pos, InputIt first, InputIt last)
+            noexcept(noexcept(emplace(pos, *first)))
+            requires std::constructible_from<T, std::iter_reference_t<InputIt>>
+        {
+            // no elements
+            if (first == last) { return unconst_iterator(pos); }
+
+            // first element (to get return value)
+            auto ret = emplace(pos, *first);
+            ++first;
+
+            // remaining elements
+            for (; first != last; ++first) { emplace(pos, *first); }
+
+            return ret;
+        }
+
+        // (5) inserts elements from initializer list before pos
+        // returns iterator to first element inserted, or pos if list is empty
+        constexpr iterator
+        insert(const_iterator pos, std::initializer_list<T> il)
+            noexcept(noexcept(insert(pos, std::begin(il), std::end(il))))
+            requires std::constructible_from<T, const T&>
+        {
+            return insert(pos, std::begin(il), std::end(il));
+        }
+
+        // (1) removes the element at pos
         // returns ++pos if pos is not end(), otherwise end()
         constexpr iterator
         erase(const_iterator pos) noexcept
@@ -525,8 +615,8 @@ namespace sbmr::_detail {
             SBMR_ASSERT_CONSTEXPR(!empty());
 
             // get node and setup ret
-            auto *node = const_cast<node_type *>(pos.m_node);
-            auto it_ret = iterator{const_cast<node_type *>((++pos).m_node)};
+            auto *node  = unconst_iterator(pos).m_node;
+            auto it_ret = unconst_iterator(++pos);
 
             auto*& new_next = ((node == m_head) ? m_head : node->prev->next);
             auto*& new_prev = ((node == m_tail) ? m_tail : node->next->prev);
@@ -540,18 +630,20 @@ namespace sbmr::_detail {
             return it_ret;
         }
 
-        // removes the elements in the range [first, last)
+        // (2) removes the elements in the range [first, last)
+        // returns last
         constexpr iterator
         erase(const_iterator first, const_iterator last) noexcept
         {
-            auto _first = iterator{const_cast<node_type *>(first.m_node)};
-            auto _last  = iterator{const_cast<node_type *>(last.m_node)};
+            auto _first = unconst_iterator(first);
+            auto _last  = unconst_iterator(last);
 
             while (_first != _last) { _first = erase(_first); }
 
             return _first;
         }
 
+        // removes all elements from the container
         constexpr void
         clear() noexcept
         {
