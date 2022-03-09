@@ -70,6 +70,53 @@ namespace sbmr::_detail {
                    std::less_equal{}(pos, m_end);
         }
 
+        // changes the capacity of the container
+        // pre-conditions: new_cap >= size()
+        constexpr void
+        reserve_or_shrink_capacity(size_type new_cap)
+        {
+            // check pre-condition
+            SBMR_ASSERT_CONSTEXPR(new_cap >= size());
+
+            // check if we need to do work
+            if (new_cap == capacity())
+                ;
+
+            // special case so that we can ensure we don't carry a compile-time
+            //   allocation into runtime
+            else if (size() == 0)
+            {
+                do_deallocate(m_data, capacity());
+
+                m_data = nullptr;
+                m_end  = nullptr;
+                m_cap  = nullptr;
+            }
+
+            // do re-allocation
+            else
+            {
+                auto old_cap = capacity();
+
+                auto *new_data = alloc_traits::allocate(m_alloc, new_cap);
+                auto *new_end  = new_data;
+
+                for (auto *it = m_data; it != m_end;)
+                {
+                    auto *tmp = it++;
+                    alloc_traits::construct(m_alloc, new_end, *tmp);
+                    alloc_traits::destroy(m_alloc, tmp);
+                    ++new_end;
+                }
+
+                do_deallocate(m_data, old_cap);
+
+                m_data = new_data;
+                m_end  = new_end;
+                m_cap  = new_data + new_cap;
+            }
+        }
+
         // ensures container can hold size() + count elements
         // pre-conditions: size() + count <= max_size() (and no overflow)
         constexpr void
@@ -79,16 +126,13 @@ namespace sbmr::_detail {
             SBMR_ASSERT_CONSTEXPR((size() + count) <= max_size());
             SBMR_ASSERT_CONSTEXPR((std::numeric_limits<size_type>::max() - size()) > count);
 
-            // check if we need to do work
-            if (size() + count <= capacity()) { return; }
-
             // calculate new capacity
             auto new_cap = size() + count;
             if (new_cap < PAGE_SIZE) { new_cap = std::bit_ceil(new_cap); }
             else { new_cap += PAGE_SIZE - (new_cap % PAGE_SIZE); }
 
             // grow
-            reserve(new_cap);
+            reserve_or_shrink_capacity(count);
         }
 
         // wrapper around alloc_traits::deallocate(m_alloc, ...)
@@ -119,14 +163,9 @@ namespace sbmr::_detail {
         // copy constructor
         constexpr dyn_array(const dyn_array& other)
         {
-            m_data = alloc_traits::allocate(m_alloc, other.capacity());
-            m_end  = m_data;
-            m_cap  = m_data + other.capacity();
+            reserve(other.capacity());
 
-            for (const auto& val : other) {
-                alloc_traits::construct(m_alloc, m_end, val);
-                ++m_end;
-            }
+            for (const auto& val: other) { push_back(val); }
         }
 
         // move constructor
@@ -143,16 +182,9 @@ namespace sbmr::_detail {
             if (&other != this)
             {
                 clear();
-                shrink_to_fit();
+                reserve_or_shrink_capacity(other.capacity());
 
-                m_data = alloc_traits::allocate(m_alloc, other.capacity());
-                m_end  = m_data;
-                m_cap  = m_data + other.capacity();
-
-                for (const auto& val : other) {
-                    alloc_traits::construct(m_alloc, m_end, val);
-                    ++m_end;
-                }
+                for (const auto& val : other) { push_back(val); }
             }
 
             return *this;
@@ -164,7 +196,8 @@ namespace sbmr::_detail {
         {
             if (&other != this)
             {
-                do_deallocate(capacity());
+                clear();
+                shrink_to_fit();
 
                 m_data = std::exchange(other.m_data, nullptr);
                 m_end  = std::exchange(other.m_end, nullptr);
@@ -218,66 +251,14 @@ namespace sbmr::_detail {
         constexpr void
         reserve(size_type new_cap)
         {
-            if (new_cap > capacity())
-            {
-                auto old_cap = capacity();
-                auto *new_data = alloc_traits::allocate(m_alloc, new_cap);
-                auto *new_end  = new_data;
-
-                for (auto *it = m_data; it != m_end;)
-                {
-                    auto *tmp = it++;
-                    alloc_traits::construct(m_alloc, new_end, *tmp);
-                    alloc_traits::destroy(m_alloc, tmp);
-                    ++new_end;
-                }
-
-                do_deallocate(m_data, old_cap);
-
-                m_data = new_data;
-                m_end  = new_end;
-                m_cap  = m_data + new_cap;
-            }
+            if (new_cap > capacity()) { reserve_or_shrink_capacity(new_cap); }
         }
 
         // requests the removal of unused capacity (non-binding)
         constexpr void
         shrink_to_fit()
         {
-            // special case so that we can ensure we don't carry a compile-time
-            //   allocation into runtime
-            if (size() == 0)
-            {
-                do_deallocate(m_data, capacity());
-
-                m_data = nullptr;
-                m_end  = nullptr;
-                m_cap  = nullptr;
-            }
-
-            // check if we need to do any re-allocation
-            else if (size() < capacity())
-            {
-                auto old_cap = capacity();
-                auto new_cap = size();
-
-                auto *new_data = alloc_traits::allocate(m_alloc, new_cap);
-                auto *new_end  = new_data;
-
-                for (auto *it = m_data; it != m_end;)
-                {
-                    auto *tmp = it++;
-                    alloc_traits::construct(m_alloc, new_end, *tmp);
-                    alloc_traits::destroy(m_alloc, tmp);
-                    ++new_end;
-                }
-
-                do_deallocate(m_data, old_cap);
-
-                m_data = new_data;
-                m_end  = new_end;
-                m_cap  = new_data + new_cap;
-            }
+            reserve_or_shrink_capacity(size());
         }
 
 
@@ -368,12 +349,8 @@ namespace sbmr::_detail {
             m_end -= diff;
 
             // destroy everything that was removed
-            auto *it = m_end;
-            while (diff > 0)
-            {
+            for (auto *it = m_end; diff > 0; ++it, --diff) {
                 alloc_traits::destroy(m_alloc, it);
-                ++it;
-                --diff;
             }
 
             return ret;
