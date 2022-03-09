@@ -84,7 +84,7 @@ namespace sbmr::_detail {
 
             // special case so that we can ensure we don't carry a compile-time
             //   allocation into runtime
-            else if (size() == 0)
+            else if (new_cap == 0)
             {
                 do_deallocate(m_data, capacity());
 
@@ -132,7 +132,7 @@ namespace sbmr::_detail {
             else { new_cap += PAGE_SIZE - (new_cap % PAGE_SIZE); }
 
             // grow
-            reserve_or_shrink_capacity(count);
+            reserve(new_cap);
         }
 
         // wrapper around alloc_traits::deallocate(m_alloc, ...)
