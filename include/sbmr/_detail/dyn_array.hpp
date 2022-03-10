@@ -21,11 +21,11 @@ namespace sbmr::_detail {
     // necessary because clang hasn't made theirs constexpr as of writing this
     // it's restricted to trivial T, and always uses std::allocator<T>
     // only used in sbmr::_impl::chunk_resource_consteval
-    // uses [[no_unique_address]] instead of EBO for allocator member
 
     template <class T>
         requires std::is_trivial_v<T>
     class dyn_array
+        : private std::allocator<T>
     {
     public:
 
@@ -50,7 +50,14 @@ namespace sbmr::_detail {
         pointer m_data = nullptr;
         pointer m_end  = nullptr;
         pointer m_cap  = nullptr;
-        [[no_unique_address]] alloc_type m_alloc;
+        //[[no_unique_address]] alloc_type get_alloc();
+
+        // returns an *this cast to the allocator base type
+        [[nodiscard]] constexpr alloc_type&
+        get_alloc() noexcept
+        {
+            return static_cast<alloc_type&>(*this);
+        }
 
         // constants
         static constexpr size_type PAGE_SIZE = 4096u;
@@ -98,14 +105,14 @@ namespace sbmr::_detail {
             {
                 auto old_cap = capacity();
 
-                auto *new_data = alloc_traits::allocate(m_alloc, new_cap);
+                auto *new_data = alloc_traits::allocate(get_alloc(), new_cap);
                 auto *new_end  = new_data;
 
                 for (auto *it = m_data; it != m_end;)
                 {
                     auto *tmp = it++;
-                    alloc_traits::construct(m_alloc, new_end, *tmp);
-                    alloc_traits::destroy(m_alloc, tmp);
+                    alloc_traits::construct(get_alloc(), new_end, *tmp);
+                    alloc_traits::destroy(get_alloc(), tmp);
                     ++new_end;
                 }
 
@@ -135,7 +142,7 @@ namespace sbmr::_detail {
             reserve(new_cap);
         }
 
-        // wrapper around alloc_traits::deallocate(m_alloc, ...)
+        // wrapper around alloc_traits::deallocate(get_alloc(), ...)
         // required because de-allocating a null pointer is not constexpr
         constexpr void
         do_deallocate(pointer p, size_type n) noexcept
@@ -143,7 +150,7 @@ namespace sbmr::_detail {
             if (std::is_constant_evaluated()) {
                 if (p == nullptr) { return; }
             }
-            alloc_traits::deallocate(m_alloc, p, n);
+            alloc_traits::deallocate(get_alloc(), p, n);
         }
 
     public:
@@ -301,7 +308,7 @@ namespace sbmr::_detail {
         push_back(const_reference value)
         {
             grow_if_needed_by(1);
-            alloc_traits::construct(m_alloc, m_end, value);
+            alloc_traits::construct(get_alloc(), m_end, value);
             ++m_end;
         }
 
@@ -312,7 +319,7 @@ namespace sbmr::_detail {
         {
             SBMR_ASSERT_CONSTEXPR(!empty());
             --m_end;
-            alloc_traits::destroy(m_alloc, m_end);
+            alloc_traits::destroy(get_alloc(), m_end);
         }
 
         // removes element at pos from the container
@@ -350,7 +357,7 @@ namespace sbmr::_detail {
 
             // destroy everything that was removed
             for (auto *it = m_end; diff > 0; ++it, --diff) {
-                alloc_traits::destroy(m_alloc, it);
+                alloc_traits::destroy(get_alloc(), it);
             }
 
             return ret;
@@ -364,7 +371,7 @@ namespace sbmr::_detail {
             while (it != m_end)
             {
                 auto *tmp = it++;
-                alloc_traits::destroy(m_alloc, tmp);
+                alloc_traits::destroy(get_alloc(), tmp);
             }
             m_end = m_data;
         }
