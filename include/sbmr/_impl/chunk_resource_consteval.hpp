@@ -97,7 +97,7 @@ namespace sbmr::_impl {
             else
             {
                 SBMR_ASSERT(!"cannot be called at runtime");
-                return {};
+                return -1;
             }
         }
 
@@ -122,7 +122,7 @@ namespace sbmr::_impl {
             else
             {
                 SBMR_ASSERT(!"cannot be called at runtime");
-                return {};
+                return nullptr;
             }
         }
 

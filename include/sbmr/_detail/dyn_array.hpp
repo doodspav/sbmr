@@ -239,10 +239,7 @@ namespace sbmr::_detail {
             auto umax = std::numeric_limits<size_type>::max();
             auto imax = std::numeric_limits<difference_type>::max();
 
-            auto ubits = std::numeric_limits<size_type>::digits;
-            auto ibits = std::numeric_limits<difference_type>::digits;
-
-            if (ibits >= ubits) { return umax; }
+            if (std::cmp_greater(imax, umax)) { return umax; }
             else { return static_cast<size_type>(imax); }
         }
 

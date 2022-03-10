@@ -129,7 +129,7 @@ namespace sbmr::_impl {
         }
 
         // sorts all available indexes in reverse order
-        // intended to improve performance of cyclic allocation patterns
+        // intended to improve performance of stack-like cyclic allocation patterns
         constexpr void
         rsort_available_indexes() noexcept
         {
