@@ -5,8 +5,10 @@
 #include <cstddef>
 #include <new>
 #include <ostream>
+#include <type_traits>
 #include <utility>
 
+#include <sbmr/bad_alloc.hpp>
 #include <sbmr/resource_options.hpp>
 
 #include <sbmr/_impl/chunk_resource_runtime.hpp>
@@ -81,9 +83,7 @@ namespace sbmr {
         constexpr void
         defrag() noexcept
         {
-            if (!std::is_constant_evaluated()) {
-                m_runtime.rsort_available_indexes();
-            }
+            m_runtime.rsort_available_indexes();
         }
 
         // may improve memory access patterns for stack-like cyclic allocation
@@ -96,9 +96,7 @@ namespace sbmr {
         constexpr void
         defrag_optimistic() noexcept
         {
-            if (!std::is_constant_evaluated()) {
-                m_runtime.rsort_optimistic_available_indexes();
-            }
+            m_runtime.rsort_optimistic_available_indexes();
         }
 
         // equality comparison
@@ -116,6 +114,55 @@ namespace sbmr {
         operator<<(std::ostream& os, const chunk_resource& cr)
         {
             return os << "chunk_resource<" << cr.options() << '>';
+        }
+
+        // de-allocates the storage pointed to by ptr
+        // pre-conditions: ptr obtained from allocate_bytes(n, ...)
+        constexpr void
+        deallocate_bytes(void *ptr, [[maybe_unused]] size_type n) noexcept
+        {
+            // check pre-conditions
+            SBMR_ASSERTM_CONSTEXPR(m_runtime.is_owned(ptr), "invalid pointer");
+            SBMR_ASSERTM_CONSTEXPR(m_runtime.is_allocated(ptr) != -1, "double free");
+
+            // perform de-allocation
+            auto token = m_runtime.is_allocated(ptr);
+            m_runtime.return_block_unchecked(token);
+        }
+
+        // de-allocates the storage pointed to by ptr
+        // pre-conditions: ptr obtained from allocate_object(n, ...)
+        template <class T>
+            requires std::is_object_v<T>
+        constexpr void
+        deallocate_object(T *ptr, size_type n) noexcept
+        {
+            // allocated using m_consteval
+            if (std::is_constant_evaluated())
+            {
+                // check pre-conditions
+                SBMR_ASSERTM_CONSTEVAL(m_consteval.is_maybe_allocated(ptr), "invalid pointer");
+                SBMR_ASSERTM_CONSTEVAL(m_consteval.is_allocated(ptr, n) != -1, "invalid size");
+
+                // perform de-allocation
+                auto token = m_consteval.is_allocated(ptr, n);
+                m_consteval.return_ptr_unchecked(ptr, n, token);
+            }
+            // allocated using m_runtime
+            else
+            {
+                // don't defer to deallocate_bytes even though it's identical
+                // would be confusing to call this and have assertion come from
+                //   the other deallocate function
+
+                // check pre-conditions
+                SBMR_ASSERTM_CONSTEXPR(m_runtime.is_owned(ptr), "invalid pointer");
+                SBMR_ASSERTM_CONSTEXPR(m_runtime.is_allocated(ptr) != -1, "double free");
+
+                // perform de-allocation
+                auto token = m_runtime.is_allocated(ptr);
+                m_runtime.return_block_unchecked(token);
+            }
         }
     };
 
