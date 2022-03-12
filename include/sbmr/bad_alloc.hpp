@@ -191,6 +191,55 @@ namespace sbmr {
     };
 
 
+    class bad_alloc_array_length
+        : public bad_alloc
+    {
+    public:
+
+        explicit bad_alloc_array_length(std::size_t array_length,
+                                        std::size_t element_size) noexcept
+            : m_array_length{array_length},
+              m_element_size{element_size}
+        {
+            char *it = std::data(m_what);
+            it = std::ranges::copy(sva, it).out;
+            it = sprint_size(it, it + UZN, m_array_length);
+            it = std::ranges::copy(svb, it).out;
+            it = sprint_size(it, it + UZN, m_element_size);
+            it = std::ranges::copy(svc, it).out;
+            *it = '\0';
+        }
+
+        [[nodiscard]] const char *
+        what() const noexcept override
+        {
+            return m_what;
+        }
+
+        [[nodiscard]] std::size_t
+        array_length() const noexcept
+        {
+            return m_array_length;
+        }
+
+        [[nodiscard]] std::size_t
+        element_size() const noexcept
+        {
+            return m_element_size;
+        }
+
+    private:
+
+        static constexpr std::string_view sva = "sizeof an array T[";
+        static constexpr std::string_view svb = "] with sizeof(T) == ";
+        static constexpr std::string_view svc = " would overflow std::size_t or std::ptrdiff_t";
+
+        char m_what[sva.size() + UZN + svb.size() + UZN + svc.size() + 1]{};
+        std::size_t m_array_length;
+        std::size_t m_element_size;
+    };
+
+
 }  // namespace sbmr
 
 
