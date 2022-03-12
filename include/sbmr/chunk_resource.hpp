@@ -2,6 +2,7 @@
 #define SBMR_CHUNK_RESOURCE_HPP
 
 
+#include <bit>
 #include <cstddef>
 #include <new>
 #include <ostream>
@@ -40,7 +41,7 @@ namespace sbmr {
         impl_consteval m_consteval;
 
         // de-allocates the storage pointed to by ptr
-        // pre-conditions: ptr obtained from do_allocate_bytes(n, ...)
+        // pre-conditions: ptr obtained from allocate_bytes(n, ...)
         static constexpr void
         do_deallocate_bytes(chunk_resource& cr, void *ptr, size_type) noexcept
         {
@@ -57,7 +58,7 @@ namespace sbmr {
         }
 
         // de-allocates the storage pointed to by ptr
-        // pre-conditions: ptr obtained from do_allocate_object(n, ...)
+        // pre-conditions: ptr obtained from allocate_object(n, ...)
         template <class T>
             requires std::is_object_v<T>
         static constexpr void
@@ -111,10 +112,22 @@ namespace sbmr {
         auto& operator=(chunk_resource&&)      = delete;
 
         // returns Opts.normalized()
-        [[nodiscard]] constexpr options_type
-        options() const noexcept
+        [[nodiscard]] static constexpr options_type
+        options() noexcept
         {
             return impl_runtime::s_options;
+        }
+
+        // returns the number of blocks available to be allocated
+        // if value is 0, allocation will unconditionally fail
+        [[nodiscard]] constexpr size_type
+        available_blocks() const noexcept
+        {
+            auto count = m_runtime.m_available_blocks;
+            if (std::is_constant_evaluated()) {
+                count -= m_consteval.m_ptrs.size();
+            }
+            return count;
         }
 
         // this is NOT a check for whether a pointer is valid to deallocate
@@ -135,8 +148,9 @@ namespace sbmr {
             else { return m_runtime.is_maybe_owned(unknown_ptr); }
         }
 
-        // may improve memory access patterns for stack-like cyclic allocation
-        //   patterns if called at the beginning of every major cycle
+        // may improve memory locality for subsequent allocations following a
+        //   stack-like cyclic allocation pattern if called at the beginning of
+        //   every major cycle
         // prefer this to defrag_optimistic() if, until this call, allocations
         //   haven't followed such a pattern
         // is a no-op at compile time
@@ -146,8 +160,9 @@ namespace sbmr {
             m_runtime.rsort_available_indexes();
         }
 
-        // may improve memory access patterns for stack-like cyclic allocation
-        //   patterns if called at the beginning of every major cycle
+        // may improve memory locality for subsequent allocations following a
+        //   stack-like cyclic allocation pattern if called at the beginning of
+        //   every major cycle
         // prefer this to defrag() if, until this call, allocations have (mostly)
         //   followed such a pattern
         // if allocation patterns before this call fully follow such a pattern,
@@ -174,6 +189,92 @@ namespace sbmr {
         operator<<(std::ostream& os, const chunk_resource& cr)
         {
             return os << "chunk_resource<" << cr.options() << '>';
+        }
+
+        // allocates n bytes of storage
+        // allocation may persist from compile-time into runtime
+        // throws a subtype of std::bad_alloc on failure
+        [[gnu::malloc(do_deallocate_bytes, 2)]]
+        [[gnu::assume_aligned(options().block_align)]]
+        [[gnu::returns_nonnull, gnu::alloc_size(2)]]
+        [[nodiscard]] constexpr void *
+        allocate_bytes(size_type n)
+        {
+            // check size in range
+            if (n > options().block_size) {
+                throw bad_alloc_unsupported_size(n, options().block_size);
+            }
+
+            // check availability
+            if (available_blocks() == 0) {
+                throw bad_alloc_out_of_memory();
+            }
+
+            // success
+            return m_runtime.obtain_ptr_unchecked();
+        }
+
+        // allocates n bytes of storage, checking align meets requirements
+        // allocation may persist from compile-time into runtime
+        // throws a subtype of std::bad_alloc on failure
+        [[gnu::malloc(do_deallocate_bytes, 2)]]
+        [[gnu::assume_aligned(options().block_align)]]
+        [[gnu::returns_nonnull, gnu::alloc_size(2), gnu::alloc_align(3)]]
+        [[nodiscard]] constexpr void *
+        allocate_bytes(size_type n, align_type align)
+        {
+            auto a = static_cast<size_type>(align);
+
+            // check align is power of 2
+            if (!std::has_single_bit(a)) {
+                throw bad_alloc_invalid_align(a);
+            }
+
+            // check align in range
+            else if (a > options().block_align) {
+                throw bad_alloc_unsupported_align(a, options().block_align);
+            }
+
+            // success
+            return allocate_bytes(n);
+        }
+
+        // allocates n bytes of storage
+        // allocation may persist from compile-time into runtime
+        // returns nullptr on failure (which need not be de-allocated)
+        [[gnu::malloc(do_deallocate_bytes, 2)]]
+        [[gnu::assume_aligned(options().block_align)]]
+        [[gnu::alloc_size(2)]]
+        [[nodiscard]] constexpr void *
+        allocate_bytes(size_type n, const std::nothrow_t&) noexcept
+        {
+            // check size in range and availability
+            if ((n > options().block_size) || (available_blocks() == 0)) {
+                return nullptr;
+            }
+
+            // success
+            return m_runtime.obtain_ptr_unchecked();
+        }
+
+        // allocates n bytes of storage, checking align meets requirements
+        // allocation may persist from compile-time into runtime
+        // returns nullptr on failure (which need not be de-allocated)
+        [[gnu::malloc(do_deallocate_bytes, 2)]]
+        [[gnu::assume_aligned(options().block_align)]]
+        [[gnu::alloc_size(2), gnu::alloc_align(3)]]
+        [[nodiscard]] constexpr void *
+        allocate_bytes(size_type n, align_type align, const std::nothrow_t&) noexcept
+        {
+            auto a = static_cast<size_type>(align);
+
+            // check align is power of 2 and in range
+            if ((!std::has_single_bit(a)) || (a > options().block_align)) {
+                return nullptr;
+            }
+
+            // success
+            return allocate_bytes(n, std::nothrow);
         }
 
         // de-allocates the storage pointed to by ptr
