@@ -19,6 +19,31 @@
 namespace sbmr {
 
 
+    // gnu::malloc does not seem to accept templated or member functions
+    // the workaround used here is to have dummy global functions that can be
+    //   passed to gnu::malloc and are called in the appropriate de-allocators
+
+    namespace _impl {
+
+
+        // no-op
+        // can be passed to gnu::malloc attribute, and should then be called
+        //   at the start of de-allocation to satisfy sanitizers
+        constexpr void
+        chunk_deallocate_bytes_noop_for_sanitizers(void *) noexcept
+        {}
+
+        // no-op
+        // can be passed to gnu::malloc attribute, and should then be called
+        //   at the start of de-allocation to satisfy sanitizers
+        constexpr void
+        chunk_deallocate_object_noop_for_sanitizers(void *) noexcept
+        {}
+
+
+    }  // namespace _impl
+
+
     template <chunk_options Opts>
         requires ValidChunkOptions<Opts.normalized()>
     class chunk_resource
@@ -39,64 +64,6 @@ namespace sbmr {
         // data members
         impl_runtime   m_runtime;
         impl_consteval m_consteval;
-
-        // de-allocates the storage pointed to by ptr
-        // pre-conditions: ptr obtained from allocate_bytes(n, ...)
-        static constexpr void
-        do_deallocate_bytes(chunk_resource& cr, void *ptr, size_type) noexcept
-        {
-            // check nullptr and zero block
-            if (ptr == nullptr || ptr == &impl_runtime::s_zero_block) { return; }
-
-            // check pre-conditions
-            SBMR_ASSERTM_CONSTEXPR(cr.m_runtime.is_owned(ptr), "invalid pointer");
-            SBMR_ASSERTM_CONSTEXPR(cr.m_runtime.is_allocated(ptr) != -1, "double free");
-
-            // perform de-allocation
-            auto token = cr.m_runtime.is_allocated(ptr);
-            cr.m_runtime.return_block_unchecked(token);
-        }
-
-        // de-allocates the storage pointed to by ptr
-        // pre-conditions: ptr obtained from allocate_object(n, ...)
-        template <class T>
-            requires std::is_object_v<T>
-        static constexpr void
-        do_deallocate_object(chunk_resource& cr, T *ptr, size_type n) noexcept
-        {
-            // check nullptr
-            if (ptr == nullptr) { return; }
-
-            // allocated using m_consteval
-            if (std::is_constant_evaluated())
-            {
-                // check pre-conditions
-                SBMR_ASSERTM_CONSTEVAL(cr.m_consteval.is_maybe_allocated(ptr), "invalid pointer");
-                SBMR_ASSERTM_CONSTEVAL(cr.m_consteval.is_allocated(ptr, n) != -1, "invalid size");
-
-                // perform de-allocation
-                auto token = cr.m_consteval.is_allocated(ptr, n);
-                cr.m_consteval.return_ptr_unchecked(ptr, n, token);
-            }
-            // allocated using m_runtime
-            else
-            {
-                // don't defer to do_deallocate_bytes even though it's identical
-                // would be confusing to call this and have assertion come from
-                //   the other do_deallocate function
-
-                // check zero block (already checked nullptr)
-                if (ptr == &impl_runtime::s_zero_block) { return; }
-
-                // check pre-conditions
-                SBMR_ASSERTM_CONSTEXPR(cr.m_runtime.is_owned(ptr), "invalid pointer");
-                SBMR_ASSERTM_CONSTEXPR(cr.m_runtime.is_allocated(ptr) != -1, "double free");
-
-                // perform de-allocation
-                auto token = cr.m_runtime.is_allocated(ptr);
-                cr.m_runtime.return_block_unchecked(token);
-            }
-        }
 
     public:
 
@@ -194,7 +161,7 @@ namespace sbmr {
         // allocates n bytes of storage
         // allocation may persist from compile-time into runtime
         // throws a subtype of std::bad_alloc on failure
-        [[gnu::malloc(do_deallocate_bytes, 2)]]
+        [[gnu::malloc(_impl::chunk_deallocate_bytes_noop_for_sanitizers, 1)]]
         [[gnu::assume_aligned(options().block_align)]]
         [[gnu::returns_nonnull, gnu::alloc_size(2)]]
         [[nodiscard]] constexpr void *
@@ -217,7 +184,7 @@ namespace sbmr {
         // allocates n bytes of storage, checking align meets requirements
         // allocation may persist from compile-time into runtime
         // throws a subtype of std::bad_alloc on failure
-        [[gnu::malloc(do_deallocate_bytes, 2)]]
+        [[gnu::malloc(_impl::chunk_deallocate_bytes_noop_for_sanitizers, 1)]]
         [[gnu::assume_aligned(options().block_align)]]
         [[gnu::returns_nonnull, gnu::alloc_size(2), gnu::alloc_align(3)]]
         [[nodiscard]] constexpr void *
@@ -242,7 +209,7 @@ namespace sbmr {
         // allocates n bytes of storage
         // allocation may persist from compile-time into runtime
         // returns nullptr on failure (which need not be de-allocated)
-        [[gnu::malloc(do_deallocate_bytes, 2)]]
+        [[gnu::malloc(_impl::chunk_deallocate_bytes_noop_for_sanitizers, 1)]]
         [[gnu::assume_aligned(options().block_align)]]
         [[gnu::alloc_size(2)]]
         [[nodiscard]] constexpr void *
@@ -260,7 +227,7 @@ namespace sbmr {
         // allocates n bytes of storage, checking align meets requirements
         // allocation may persist from compile-time into runtime
         // returns nullptr on failure (which need not be de-allocated)
-        [[gnu::malloc(do_deallocate_bytes, 2)]]
+        [[gnu::malloc(_impl::chunk_deallocate_bytes_noop_for_sanitizers, 1)]]
         [[gnu::assume_aligned(options().block_align)]]
         [[gnu::alloc_size(2), gnu::alloc_align(3)]]
         [[nodiscard]] constexpr void *
@@ -280,9 +247,21 @@ namespace sbmr {
         // de-allocates the storage pointed to by ptr
         // pre-conditions: ptr obtained from allocate_bytes(n, ...)
         constexpr void
-        deallocate_bytes(void *ptr, size_type n) noexcept
+        deallocate_bytes(void *ptr, [[maybe_unused]] size_type n) noexcept
         {
-            do_deallocate_bytes(*this, ptr, n);
+            // inform sanitizers
+            _impl::chunk_deallocate_bytes_noop_for_sanitizers(ptr);
+
+            // check nullptr and zero block
+            if (ptr == nullptr || ptr == &impl_runtime::s_zero_block) { return; }
+
+            // check pre-conditions
+            SBMR_ASSERTM_CONSTEXPR(m_runtime.is_owned(ptr), "invalid pointer");
+            SBMR_ASSERTM_CONSTEXPR(m_runtime.is_allocated(ptr) != -1, "double free");
+
+            // perform de-allocation
+            auto token = m_runtime.is_allocated(ptr);
+            m_runtime.return_block_unchecked(token);
         }
 
         // de-allocates the storage pointed to by ptr
@@ -292,7 +271,41 @@ namespace sbmr {
         constexpr void
         deallocate_object(T *ptr, size_type n) noexcept
         {
-            do_deallocate_object<T>(*this, ptr, n);
+            // inform sanitizers
+            _impl::chunk_deallocate_object_noop_for_sanitizers(ptr);
+
+            // check nullptr
+            if (ptr == nullptr) { return; }
+
+            // allocated using m_consteval
+            if (std::is_constant_evaluated())
+            {
+                // check pre-conditions
+                SBMR_ASSERTM_CONSTEVAL(m_consteval.is_maybe_allocated(ptr), "invalid pointer");
+                SBMR_ASSERTM_CONSTEVAL(m_consteval.is_allocated(ptr, n) != -1, "invalid size");
+
+                // perform de-allocation
+                auto token = m_consteval.is_allocated(ptr, n);
+                m_consteval.template return_ptr_unchecked(ptr, n, token);
+            }
+            // allocated using m_runtime
+            else
+            {
+                // don't defer to deallocate_bytes even though it's identical
+                // would be confusing to call this function and have assertion
+                //   come from other deallocate function
+
+                // check zero block (already checked nullptr)
+                if (ptr == &impl_runtime::s_zero_block) { return; }
+
+                // check pre-conditions
+                SBMR_ASSERTM_CONSTEXPR(m_runtime.is_owned(ptr), "invalid pointer");
+                SBMR_ASSERTM_CONSTEXPR(m_runtime.is_allocated(ptr) != -1, "double free");
+
+                // perform de-allocation
+                auto token = m_runtime.is_allocated(ptr);
+                m_runtime.return_block_unchecked(token);
+            }
         }
     };
 
