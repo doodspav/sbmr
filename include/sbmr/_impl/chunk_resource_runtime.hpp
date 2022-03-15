@@ -21,9 +21,9 @@ namespace sbmr::_impl {
 
 
     // this implementation is constexpr, and all functions work at compile time
-    // unfortunately it only works in terms of void*, and reinterpret_cast is
-    //   not available at compile time, so a user would not be able to use the
-    //   allocated pointers for much
+    // it only works in terms of unsigned char*, and reinterpret_cast is not
+    //   available at compile time, so usage of the memory at compile time is
+    //   quite limited (although not completely unavailable)
 
     template <chunk_options Opts>
         requires ValidChunkOptions<Opts.normalized()>
@@ -66,12 +66,27 @@ namespace sbmr::_impl {
         using block_count_type = _detail::fast_nowrap_t<std::bit_width(s_options.block_count)>;
         using block_index_type = _detail::least_unsigned_t<std::bit_width(s_options.block_count - 1u)>;
         using block_type = struct {
-            alignas(s_options.block_align) std::byte arr[s_options.block_size];
+            alignas(s_options.block_align) unsigned char arr[s_options.block_size];
         };
+
+    private:
 
         // special block whose address is to be returned when allocating 0 bytes
         // its value should never be accessed
-        static constexpr block_type s_zero_block {};
+        static constexpr block_type _s_zero_block {};
+
+    public:
+
+        // access private block as unsigned char * rather than block_type *
+        // this is to match obtain_ptr_unchecked()'s return type
+        // also to avoid possible UB of constructing an object in memory that
+        //   isn't a pure unsigned char[]
+        // return type can be const_cast as long as it is never de-referenced
+        [[nodiscard]] static constexpr const unsigned char *
+        zero_block_ptr() noexcept
+        {
+            return std::data(_s_zero_block.arr);
+        }
 
         // data members
         block_count_type m_available_blocks = static_cast<block_count_type>(s_options.block_count);
@@ -146,13 +161,13 @@ namespace sbmr::_impl {
         }
 
         // checks if a pointer points to memory contained by m_blocks
-        // returns false for nullptr and &s_zero_block
+        // returns false for nullptr and zero_block_ptr()
         // pre-conditions: none
         [[nodiscard]] constexpr bool
         is_maybe_owned(const void *unknown_ptr) const noexcept
         {
             if ((unknown_ptr == nullptr) ||
-                (unknown_ptr == &s_zero_block))
+                (unknown_ptr == zero_block_ptr()))
             { return false; }
 
             auto *lo  = std::data(m_blocks);
@@ -164,7 +179,7 @@ namespace sbmr::_impl {
         }
 
         // checks if a pointer points to the start of a block
-        // returns false for nullptr and &s_zero_block
+        // returns false for nullptr and zero_block_ptr()
         // pre-conditions: none
         [[nodiscard]] constexpr bool
         is_owned(const void *unknown_ptr) const noexcept
@@ -276,7 +291,7 @@ namespace sbmr::_impl {
 
         // perform an allocation (i.e. mark an available block as unavailable)
         // pre-conditions: m_available_blocks > 0
-        [[nodiscard, gnu::returns_nonnull]] constexpr block_type *
+        [[nodiscard, gnu::returns_nonnull]] constexpr unsigned char *
         obtain_ptr_unchecked() noexcept
         {
             // pre-conditions check
@@ -284,7 +299,7 @@ namespace sbmr::_impl {
                 "no blocks available");
 
             auto idx = m_block_index_stack[--m_available_blocks];
-            return std::data(m_blocks) + idx;
+            return std::data((std::data(m_blocks) + idx)->arr);
         }
 
         // perform a de-allocation (i.e. mark an unavailable block as available)
