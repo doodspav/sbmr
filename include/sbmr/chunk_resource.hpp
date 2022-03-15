@@ -4,6 +4,7 @@
 
 #include <bit>
 #include <cstddef>
+#include <limits>
 #include <new>
 #include <ostream>
 #include <type_traits>
@@ -64,6 +65,21 @@ namespace sbmr {
         // data members
         impl_runtime   m_runtime;
         impl_consteval m_consteval;
+
+        // checks n * sz is a valid array size
+        // i.e. it doesn't overflow std::size_t or std::ptrdiff_t
+        [[nodiscard]] static constexpr bool
+        check_no_overflow(size_type n, size_type sz) noexcept
+        {
+            // both can be 0 since calloc(0, 0) is valid
+            // but in our case, sz will never be 0
+            // since sz is obtained directly from sizeof(T)
+            SBMR_ASSERT_CONSTEXPR(sz != 0);
+            if (n == 0 || sz == 0) { return true; }
+
+            // defer to function from resource_options (flipped args)
+            else { return _detail::valid_sizeof(sz, n); }
+        }
 
     public:
 
@@ -164,7 +180,7 @@ namespace sbmr {
         [[gnu::malloc(_impl::chunk_deallocate_bytes_noop_for_sanitizers, 1)]]
         [[gnu::assume_aligned(options().block_align)]]
         [[gnu::returns_nonnull, gnu::alloc_size(2)]]
-        [[nodiscard]] constexpr void *
+        [[nodiscard]] constexpr unsigned char *
         allocate_bytes(size_type n)
         {
             // check size in range
@@ -172,13 +188,16 @@ namespace sbmr {
                 throw bad_alloc_unsupported_size(n, options().block_size);
             }
 
-            // check availability
-            if (available_blocks() == 0) {
+            // check availability (unless n == 0)
+            else if (n != 0 && available_blocks() == 0) {
                 throw bad_alloc_out_of_memory();
             }
 
             // success
-            return m_runtime.obtain_ptr_unchecked();
+            if (n == 0) {
+                return const_cast<unsigned char *>(impl_runtime::zero_block_ptr());
+            }
+            else { return m_runtime.obtain_ptr_unchecked(); }
         }
 
         // allocates n bytes of storage, checking align meets requirements
@@ -187,7 +206,7 @@ namespace sbmr {
         [[gnu::malloc(_impl::chunk_deallocate_bytes_noop_for_sanitizers, 1)]]
         [[gnu::assume_aligned(options().block_align)]]
         [[gnu::returns_nonnull, gnu::alloc_size(2), gnu::alloc_align(3)]]
-        [[nodiscard]] constexpr void *
+        [[nodiscard]] constexpr unsigned char *
         allocate_bytes(size_type n, align_type align)
         {
             auto a = static_cast<size_type>(align);
@@ -212,16 +231,21 @@ namespace sbmr {
         [[gnu::malloc(_impl::chunk_deallocate_bytes_noop_for_sanitizers, 1)]]
         [[gnu::assume_aligned(options().block_align)]]
         [[gnu::alloc_size(2)]]
-        [[nodiscard]] constexpr void *
+        [[nodiscard]] constexpr unsigned char *
         allocate_bytes(size_type n, const std::nothrow_t&) noexcept
         {
-            // check size in range and availability
-            if ((n > options().block_size) || (available_blocks() == 0)) {
+            // check size in range
+            // check availability (unless n == 0)
+            if ((n > options().block_size) ||
+                (n != 0 && available_blocks() == 0)) {
                 return nullptr;
             }
 
             // success
-            return m_runtime.obtain_ptr_unchecked();
+            if (n == 0) {
+                return const_cast<unsigned char *>(impl_runtime::zero_block_ptr());
+            }
+            else { return m_runtime.obtain_ptr_unchecked(); }
         }
 
         // allocates n bytes of storage, checking align meets requirements
@@ -230,18 +254,152 @@ namespace sbmr {
         [[gnu::malloc(_impl::chunk_deallocate_bytes_noop_for_sanitizers, 1)]]
         [[gnu::assume_aligned(options().block_align)]]
         [[gnu::alloc_size(2), gnu::alloc_align(3)]]
-        [[nodiscard]] constexpr void *
+        [[nodiscard]] constexpr unsigned char *
         allocate_bytes(size_type n, align_type align, const std::nothrow_t&) noexcept
         {
             auto a = static_cast<size_type>(align);
 
-            // check align is power of 2 and in range
+            // check align is power of 2
+            // check align in range
             if ((!std::has_single_bit(a)) || (a > options().block_align)) {
                 return nullptr;
             }
 
             // success
             return allocate_bytes(n, std::nothrow);
+        }
+
+        // allocates suitable storage for n objects of type T
+        // allocation CANNOT persist from compile-time into runtime
+        // throws a subtype of std::bad_alloc on failure
+        template <class T>
+            requires std::is_object_v<T>
+        [[gnu::malloc(_impl::chunk_deallocate_object_noop_for_sanitizers, 1)]]
+        [[gnu::assume_aligned(alignof(T))]]  // not from options() due to m_consteval
+        [[gnu::returns_nonnull]]  // no param for gnu::alloc_size
+        [[nodiscard]] constexpr T *
+        allocate_object(size_type n)
+        {
+            // check n * sizeof(T) does not overflow std::size_t or std::ptrdiff_t
+            auto size = n * sizeof(T);
+            if (!check_no_overflow(n, sizeof(T))) {
+                throw bad_alloc_array_length(n, sizeof(T));
+            }
+
+            // check alignof(T) in range
+            else if (alignof(T) > options().block_align) {
+                throw bad_alloc_unsupported_align(alignof(T), options().block_align);
+            }
+
+            // check size in range
+            else if (size > options().block_size) {
+                throw bad_alloc_unsupported_size(size, options().block_size);
+            }
+
+            // check availability (unless n == 0)
+            else if (n != 0 && available_blocks() == 0) {
+                throw bad_alloc_out_of_memory();
+            }
+
+            // success
+            if (std::is_constant_evaluated()) {
+                return m_consteval.obtain_ptr_unchecked<T>(n);
+            }
+            else {
+                const unsigned char *ptr;
+                if (n == 0) { ptr = impl_runtime::zero_block_ptr(); }
+                else { ptr = m_runtime.obtain_ptr_unchecked(); }
+                return const_cast<T *>(reinterpret_cast<const T *>(ptr));
+            }
+        }
+
+        // allocates suitable storage for n objects of type T, checking align
+        // allocation CANNOT persist from compile-time into runtime
+        // throws a subtype of std::bad_alloc on failure
+        template <class T>
+            requires std::is_object_v<T>
+        [[gnu::malloc(_impl::chunk_deallocate_object_noop_for_sanitizers, 1)]]
+        [[gnu::assume_aligned(alignof(T))]]  // not from options() due to m_consteval
+        [[gnu::returns_nonnull, gnu::alloc_align(3)]]  // no param for gnu::alloc_size
+        [[nodiscard]] constexpr T *
+        allocate_object(size_type n, align_type align)
+        {
+            auto a = static_cast<size_type>(align);
+
+            // check align is a power of 2
+            if (!std::has_single_bit(a)) {
+                throw bad_alloc_invalid_align(a);
+            }
+
+            // check align in range
+            else if (a > options().block_align) {
+                throw bad_alloc_unsupported_align(a, options().block_align);
+            }
+
+            // if align < alignof(T) but is valid, align is ignored
+            // alignof(T) < options().block_align is checked in call below
+
+            // success
+            return allocate_object<T>(n);
+        }
+
+        // allocates suitable storage for n objects of type T
+        // allocation CANNOT persist from compile-time into runtime
+        // returns nullptr on failure (which need not be de-allocated)
+        template <class T>
+            requires std::is_object_v<T>
+        [[gnu::malloc(_impl::chunk_deallocate_object_noop_for_sanitizers, 1)]]
+        [[gnu::assume_aligned(alignof(T))]]  // not from options() due to m_consteval
+        // no param for gnu::alloc_size
+        [[nodiscard]] constexpr T *
+        allocate_object(size_type n, const std::nothrow_t&) noexcept
+        {
+            // check n * sizeof(T) does not overflow std::size_t or std::ptrdiff_t
+            // check alignof(T) in range
+            // check size in range
+            // check availability (unless n == 0)
+            if ((!check_no_overflow(n, sizeof(T)))     ||
+                (alignof(T) > options().block_align)   ||
+                (n * sizeof(T) > options().block_size) ||
+                (n != 0 && available_blocks() == 0))
+            { return nullptr; }
+
+            // success
+            if (std::is_constant_evaluated()) {
+                return m_consteval.obtain_ptr_unchecked<T>(n);
+            }
+            else {
+                const unsigned char *ptr;
+                if (n == 0) { ptr = impl_runtime::zero_block_ptr(); }
+                else { ptr = m_runtime.obtain_ptr_unchecked(); }
+                return const_cast<T *>(reinterpret_cast<const T *>(ptr));
+            }
+        }
+
+        // allocates suitable storage for n objects of type T, checking align
+        // allocation CANNOT persist from compile-time into runtime
+        // returns nullptr on failure (which need not be de-allocated)
+        template <class T>
+            requires std::is_object_v<T>
+        [[gnu::malloc(_impl::chunk_deallocate_object_noop_for_sanitizers, 1)]]
+        [[gnu::assume_aligned(alignof(T))]]  // not from options() due to m_consteval
+        [[gnu::alloc_align(3)]]  // no params for gnu::alloc_size
+        [[nodiscard]] constexpr T *
+        allocate_object(size_type n, align_type align, const std::nothrow_t&) noexcept
+        {
+            auto a = static_cast<size_type>(align);
+
+            // check align is a power of 2
+            // check align in range
+            if (!std::has_single_bit(a) || a > options().block_align) {
+                return nullptr;
+            }
+
+            // if align < alignof(T) but is valid, align is ignored
+            // alignof(T) < options().block_align is checked in call below
+
+            // success
+            return allocate_object<T>(n, std::nothrow);
         }
 
         // de-allocates the storage pointed to by ptr
@@ -253,7 +411,8 @@ namespace sbmr {
             _impl::chunk_deallocate_bytes_noop_for_sanitizers(ptr);
 
             // check nullptr and zero block
-            if (ptr == nullptr || ptr == &impl_runtime::s_zero_block) { return; }
+            constexpr auto *p_zero = static_cast<const void *>(impl_runtime::zero_block_ptr());
+            if (ptr == nullptr || ptr == p_zero) { return; }
 
             // check pre-conditions
             SBMR_ASSERTM_CONSTEXPR(m_runtime.is_owned(ptr), "invalid pointer");
@@ -286,7 +445,7 @@ namespace sbmr {
 
                 // perform de-allocation
                 auto token = m_consteval.is_allocated(ptr, n);
-                m_consteval.template return_ptr_unchecked(ptr, n, token);
+                m_consteval.return_ptr_unchecked(ptr, n, token);
             }
             // allocated using m_runtime
             else
@@ -296,7 +455,8 @@ namespace sbmr {
                 //   come from other deallocate function
 
                 // check zero block (already checked nullptr)
-                if (ptr == &impl_runtime::s_zero_block) { return; }
+                constexpr auto *p_zero = static_cast<const void *>(impl_runtime::zero_block_ptr());
+                if (ptr == p_zero) { return; }
 
                 // check pre-conditions
                 SBMR_ASSERTM_CONSTEXPR(m_runtime.is_owned(ptr), "invalid pointer");
