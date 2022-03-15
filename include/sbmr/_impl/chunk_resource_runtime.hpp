@@ -65,8 +65,8 @@ namespace sbmr::_impl {
         // member types
         using block_count_type = _detail::fast_nowrap_t<std::bit_width(s_options.block_count)>;
         using block_index_type = _detail::least_unsigned_t<std::bit_width(s_options.block_count - 1u)>;
-        using block_type = struct {
-            alignas(s_options.block_align) unsigned char arr[s_options.block_size];
+        using block_type = struct _ {
+            alignas(s_options.block_align) unsigned char arr[s_options.block_size]{};
         };
 
     private:
