@@ -2,6 +2,7 @@
 #define SBMR_RESOURCE_OPTIONS_HPP
 
 
+#include <algorithm>
 #include <bit>
 #include <compare>
 #include <cstddef>
@@ -19,7 +20,7 @@ namespace sbmr {
     namespace _detail {
 
 
-        // check that sizeof a chunk_resource
+        // check the sizeof of a chunk_resource
         // i.e. it can be represented by size_t and ptrdiff_t, and isn't 0
         // this should only be called using values from a normalized
         //   chunk_options object because it does not take align into account
@@ -50,6 +51,9 @@ namespace sbmr {
         std::size_t block_size;
         std::size_t block_align;
         std::size_t block_count;
+
+        // .normalized() will not increase block_align past this value
+        static constexpr std::size_t max_default_align = __STDCPP_DEFAULT_NEW_ALIGNMENT__;
 
         // checks if a block as described by the instance can hold an object of
         // type T[n]
@@ -82,6 +86,7 @@ namespace sbmr {
             SBMR_ASSERT_CONSTEXPR(_detail::valid_sizeof(block_size, block_count));
 
             // expand size to include padding
+            // i.e. increase to smallest multiple of align not less than size
             auto size = block_align;
             while (size < block_size) { size += block_align; }
 
@@ -89,7 +94,15 @@ namespace sbmr {
             // WITHOUT increasing padding
             // i.e. to the largest power of 2 that size is divisible by
             // this should never be less than block_align (if valid() == true)
-            auto align = size & (~(size - 1u));
+            // DOES NOT increase align past max_default_align
+            // going past this limit requires block_align being set to a larger
+            //   value by the user
+            auto align = block_align;
+            if (align < max_default_align)
+            {
+                align = size & (~(size - 1u));
+                align = std::min(align, max_default_align);
+            }
 
             // create new options object
             return {

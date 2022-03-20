@@ -59,12 +59,12 @@ namespace sbmr {
     private:
 
         // impl types
-        using impl_runtime   = _impl::chunk_resource_runtime<Opts.normalized()>;
         using impl_consteval = _impl::chunk_resource_consteval;
+        using impl_runtime   = _impl::chunk_resource_runtime<Opts.normalized()>;
 
         // data members
-        impl_runtime   m_runtime;
         impl_consteval m_consteval;
+        impl_runtime   m_runtime;
 
         // checks n * sz is a valid array size
         // i.e. it doesn't overflow std::size_t or std::ptrdiff_t
@@ -108,9 +108,10 @@ namespace sbmr {
         {
             auto count = m_runtime.m_available_blocks;
             if (std::is_constant_evaluated()) {
-                count -= m_consteval.m_ptrs.size();
+                using count_type = typename impl_runtime::block_count_type;
+                count -= static_cast<count_type>(m_consteval.m_ptrs.size());
             }
-            return count;
+            return static_cast<size_type>(count);
         }
 
         // this is NOT a check for whether a pointer is valid to deallocate
