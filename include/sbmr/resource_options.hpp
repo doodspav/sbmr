@@ -53,7 +53,9 @@ namespace sbmr {
         std::size_t block_count;
 
         // .normalized() will not increase block_align past this value
-        static constexpr std::size_t max_default_align = __STDCPP_DEFAULT_NEW_ALIGNMENT__;
+        // cannot be __STDCPP_DEFAULT_NEW_ALIGNMENT__ because, as it's not a
+        //   symbol, vendors do not consider changing it to be an ABI break
+        static constexpr std::size_t max_default_align = alignof(std::max_align_t);
 
         // checks if a block as described by the instance can hold an object of
         // type T[n]
