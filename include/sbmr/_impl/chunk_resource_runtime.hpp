@@ -77,6 +77,11 @@ namespace sbmr::_impl {
 
     public:
 
+        // data members
+        block_count_type m_available_blocks = static_cast<block_count_type>(s_options.block_count);
+        block_index_type m_block_index_stack[s_options.block_count];
+        block_type m_blocks[s_options.block_count];
+
         // access private block as unsigned char * rather than block_type *
         // this is to match obtain_ptr_unchecked()'s return type
         // also to avoid possible UB of constructing an object in memory that
@@ -87,11 +92,6 @@ namespace sbmr::_impl {
         {
             return std::data(_s_zero_block.arr);
         }
-
-        // data members
-        block_count_type m_available_blocks = static_cast<block_count_type>(s_options.block_count);
-        block_index_type m_block_index_stack[s_options.block_count];
-        block_type m_blocks[s_options.block_count];
 
         // pointer to base of index stack
         // essentially .begin() on the underlying container

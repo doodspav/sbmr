@@ -37,19 +37,17 @@ namespace sbmr::_impl {
         auto& operator=(const chunk_resource_consteval&) = delete;
         auto& operator=(chunk_resource_consteval&&)      = delete;
 
-        // member type
-        struct alloc_info {
+    private:
 
+        // member types
+        struct alloc_info
+        {
             const void *p;
             std::size_t n;
 
             [[nodiscard]] constexpr bool
             operator==(const alloc_info& other) const noexcept = default;
         };
-
-    private:
-
-        // member type
         using allocations_type = typename sbmr::_detail::dyn_array<alloc_info>;
 
         // data member
