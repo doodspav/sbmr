@@ -47,8 +47,33 @@ namespace sbmr::_impl {
             operator==(const alloc_info& other) const noexcept = default;
         };
 
+    private:
+
+        // member type
+        using allocations_type = typename sbmr::_detail::dyn_array<alloc_info>;
+
         // data member
-        sbmr::_detail::dyn_array<alloc_info> m_ptrs;
+        allocations_type *m_ptrs = nullptr;
+
+    public:
+
+        // number of allocations currently not de-allocated
+        [[nodiscard]] constexpr std::size_t
+        allocation_count() const noexcept
+        {
+            // compile time
+            if (std::is_constant_evaluated())
+            {
+                if (m_ptrs == nullptr) { return 0; }
+                else { return m_ptrs->size(); }
+            }
+            // runtime
+            else
+            {
+                SBMR_ASSERT(!"cannot be called at runtime");
+                return 0;
+            }
+        }
 
         // UB to call at runtime
         // checks if a pointer is currently allocated at compile time, but
@@ -59,12 +84,15 @@ namespace sbmr::_impl {
             // compile time
             if (std::is_constant_evaluated())
             {
+                // guard before accessing _m_ptrs
+                if (m_ptrs == nullptr) { return false; }
+
                 auto cmp_p = [=](alloc_info ai) -> bool {
                     return ai.p == unknown_ptr;
                 };
 
-                auto it = std::find_if(m_ptrs.cbegin(), m_ptrs.cend(), cmp_p);
-                return it != m_ptrs.cend();
+                auto it = std::find_if(m_ptrs->cbegin(), m_ptrs->cend(), cmp_p);
+                return it != m_ptrs->cend();
             }
             // runtime
             else
@@ -87,11 +115,14 @@ namespace sbmr::_impl {
             // compile time
             if (std::is_constant_evaluated())
             {
-                auto val  = alloc_info{.p=unknown_ptr, .n=n};
-                auto it   = std::find(m_ptrs.begin(), m_ptrs.end(), val);
-                auto diff = static_cast<std::ptrdiff_t>(it - m_ptrs.begin());
+                // guard before accessing _m_ptrs
+                if (m_ptrs == nullptr) { return -1; }
 
-                return (it == m_ptrs.end()) ? -1 : diff;
+                auto val  = alloc_info{.p=unknown_ptr, .n=n};
+                auto it   = std::find(m_ptrs->begin(), m_ptrs->end(), val);
+                auto diff = static_cast<std::ptrdiff_t>(it - m_ptrs->begin());
+
+                return (it == m_ptrs->end()) ? -1 : diff;
             }
             // runtime
             else
@@ -114,8 +145,12 @@ namespace sbmr::_impl {
             // compile time
             if (std::is_constant_evaluated())
             {
+                // guard before accessing _m_ptrs
+                if (m_ptrs == nullptr) { m_ptrs = new allocations_type; }
+
+                // perform allocation
                 auto *ptr = std::allocator<T>().allocate(n);
-                m_ptrs.push_back({.p=static_cast<const void *>(ptr), .n=n});
+                m_ptrs->push_back({.p=static_cast<const void *>(ptr), .n=n});
                 return ptr;
             }
             // runtime
@@ -148,19 +183,28 @@ namespace sbmr::_impl {
                     "token indicates is_allocated() failed");
                 SBMR_ASSERTM_CONSTEVAL(pos >= 0,
                     "token not obtained from is_allocated()");
-                SBMR_ASSERTM_CONSTEVAL(upos < m_ptrs.capacity(),
+                SBMR_ASSERTM_CONSTEVAL(m_ptrs != nullptr,
+                                       "token not obtained from is_allocated or already invalidated by calling non-const member function after is_allocated()");
+                SBMR_ASSERTM_CONSTEVAL(upos < m_ptrs->capacity(),
                     "token not obtained from is_allocated()");
-                SBMR_ASSERTM_CONSTEVAL(upos < m_ptrs.size(),
+                SBMR_ASSERTM_CONSTEVAL(upos < m_ptrs->size(),
                     "token likely invalidated by calling non-const member function after is_allocated()");
-                SBMR_ASSERTM_CONSTEVAL(allocated_ptr == m_ptrs[upos].p,
+                SBMR_ASSERTM_CONSTEVAL(allocated_ptr == (*m_ptrs)[upos].p,
                     "token likely invalidated by calling non-const member function after is_allocated()");
-                SBMR_ASSERTM_CONSTEVAL(n == m_ptrs[upos].n,
+                SBMR_ASSERTM_CONSTEVAL(n == (*m_ptrs)[upos].n,
                     "token likely invalidated by calling non-const member function after is_allocated()");
 
                 // free memory
-                auto it = m_ptrs.begin() + pos;
-                m_ptrs.erase(it);
+                auto it = m_ptrs->begin() + pos;
+                m_ptrs->erase(it);
                 std::allocator<T>().deallocate(allocated_ptr, n);
+
+                // de-allocate dynamic array if empty
+                if (m_ptrs->empty())
+                {
+                    delete m_ptrs;
+                    m_ptrs = nullptr;
+                }
             }
             // runtime
             else { SBMR_ASSERT(!"cannot be called at runtime"); }

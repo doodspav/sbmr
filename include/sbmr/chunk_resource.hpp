@@ -109,7 +109,7 @@ namespace sbmr {
             auto count = m_runtime.m_available_blocks;
             if (std::is_constant_evaluated()) {
                 using count_type = typename impl_runtime::block_count_type;
-                count -= static_cast<count_type>(m_consteval.m_ptrs.size());
+                count -= static_cast<count_type>(m_consteval.allocation_count());
             }
             return static_cast<size_type>(count);
         }
