@@ -13,8 +13,7 @@
 #include <sbmr/bad_alloc.hpp>
 #include <sbmr/resource_options.hpp>
 
-#include <sbmr/_impl/chunk_resource_runtime.hpp>
-#include <sbmr/_impl/chunk_resource_consteval.hpp>
+#include <sbmr/_impl/chunk_resource.hpp>
 
 
 namespace sbmr {
@@ -48,6 +47,7 @@ namespace sbmr {
     template <chunk_options Opts>
         requires ValidChunkOptions<Opts.normalized()>
     class chunk_resource
+        : private _impl::chunk_resource<Opts.normalized()>
     {
     public:
 
@@ -56,15 +56,16 @@ namespace sbmr {
         using align_type   = std::align_val_t;
         using options_type = chunk_options;
 
-    private:
+    //private:
 
-        // impl types
-        using impl_consteval = _impl::chunk_resource_consteval;
-        using impl_runtime   = _impl::chunk_resource_runtime<Opts.normalized()>;
+        // member types
+        using base_type = _impl::chunk_resource<Opts.normalized()>;
+        using typename base_type::impl_consteval_type;
+        using typename base_type::impl_runtime_type;
 
-        // data members
-        impl_consteval m_consteval;
-        impl_runtime   m_runtime;
+        // members (as functions)
+        using base_type::impl_consteval;
+        using base_type::impl_runtime;
 
         // checks n * sz is a valid array size
         // i.e. it doesn't overflow std::size_t or std::ptrdiff_t
@@ -98,7 +99,7 @@ namespace sbmr {
         [[nodiscard]] static constexpr options_type
         options() noexcept
         {
-            return impl_runtime::s_options;
+            return impl_runtime_type::s_options;
         }
 
         // returns the number of blocks available to be allocated
@@ -106,10 +107,10 @@ namespace sbmr {
         [[nodiscard]] constexpr size_type
         available_blocks() const noexcept
         {
-            auto count = m_runtime.m_available_blocks;
+            auto count = impl_runtime().m_available_blocks;
             if (std::is_constant_evaluated()) {
-                using count_type = typename impl_runtime::block_count_type;
-                count -= static_cast<count_type>(m_consteval.allocation_count());
+                using count_type = typename impl_runtime_type::block_count_type;
+                count -= static_cast<count_type>(impl_consteval().allocation_count());
             }
             return static_cast<size_type>(count);
         }
@@ -126,10 +127,10 @@ namespace sbmr {
         maybe_owns(const void *unknown_ptr) const noexcept
         {
             if (std::is_constant_evaluated()) {
-                return m_consteval.is_maybe_allocated(unknown_ptr) ||
-                       m_runtime.is_maybe_owned(unknown_ptr);
+                return impl_consteval().is_maybe_allocated(unknown_ptr) ||
+                       impl_runtime().is_maybe_owned(unknown_ptr);
             }
-            else { return m_runtime.is_maybe_owned(unknown_ptr); }
+            else { return impl_runtime().is_maybe_owned(unknown_ptr); }
         }
 
         // may improve memory locality for subsequent allocations following a
@@ -141,7 +142,7 @@ namespace sbmr {
         constexpr void
         defrag() noexcept
         {
-            m_runtime.rsort_available_indexes();
+            impl_runtime().rsort_available_indexes();
         }
 
         // may improve memory locality for subsequent allocations following a
@@ -155,7 +156,7 @@ namespace sbmr {
         constexpr void
         defrag_optimistic() noexcept
         {
-            m_runtime.rsort_optimistic_available_indexes();
+            impl_runtime().rsort_optimistic_available_indexes();
         }
 
         // equality comparison
@@ -196,9 +197,9 @@ namespace sbmr {
 
             // success
             if (n == 0) {
-                return const_cast<unsigned char *>(impl_runtime::zero_block_ptr());
+                return const_cast<unsigned char *>(impl_runtime_type::zero_block_ptr());
             }
-            else { return m_runtime.obtain_ptr_unchecked(); }
+            else { return impl_runtime().obtain_ptr_unchecked(); }
         }
 
         // allocates n bytes of storage, checking align meets requirements
@@ -244,9 +245,9 @@ namespace sbmr {
 
             // success
             if (n == 0) {
-                return const_cast<unsigned char *>(impl_runtime::zero_block_ptr());
+                return const_cast<unsigned char *>(impl_runtime_type::zero_block_ptr());
             }
-            else { return m_runtime.obtain_ptr_unchecked(); }
+            else { return impl_runtime().obtain_ptr_unchecked(); }
         }
 
         // allocates n bytes of storage, checking align meets requirements
@@ -304,12 +305,12 @@ namespace sbmr {
 
             // success
             if (std::is_constant_evaluated()) {
-                return m_consteval.obtain_ptr_unchecked<T>(n);
+                return impl_consteval().template obtain_ptr_unchecked<T>(n);
             }
             else {
                 const unsigned char *ptr;
-                if (n == 0) { ptr = impl_runtime::zero_block_ptr(); }
-                else { ptr = m_runtime.obtain_ptr_unchecked(); }
+                if (n == 0) { ptr = impl_runtime_type::zero_block_ptr(); }
+                else { ptr = impl_runtime().obtain_ptr_unchecked(); }
                 return const_cast<T *>(reinterpret_cast<const T *>(ptr));
             }
         }
@@ -367,12 +368,12 @@ namespace sbmr {
 
             // success
             if (std::is_constant_evaluated()) {
-                return m_consteval.obtain_ptr_unchecked<T>(n);
+                return impl_consteval().template obtain_ptr_unchecked<T>(n);
             }
             else {
                 const unsigned char *ptr;
-                if (n == 0) { ptr = impl_runtime::zero_block_ptr(); }
-                else { ptr = m_runtime.obtain_ptr_unchecked(); }
+                if (n == 0) { ptr = impl_runtime_type::zero_block_ptr(); }
+                else { ptr = impl_runtime().obtain_ptr_unchecked(); }
                 return const_cast<T *>(reinterpret_cast<const T *>(ptr));
             }
         }
@@ -412,16 +413,16 @@ namespace sbmr {
             _impl::chunk_deallocate_bytes_noop_for_sanitizers(ptr);
 
             // check nullptr and zero block
-            constexpr auto *p_zero = static_cast<const void *>(impl_runtime::zero_block_ptr());
+            constexpr auto *p_zero = static_cast<const void *>(impl_runtime_type::zero_block_ptr());
             if (ptr == nullptr || ptr == p_zero) { return; }
 
             // check pre-conditions
-            SBMR_ASSERTM_CONSTEXPR(m_runtime.is_owned(ptr), "invalid pointer");
-            SBMR_ASSERTM_CONSTEXPR(m_runtime.is_allocated(ptr) != -1, "double free");
+            SBMR_ASSERTM_CONSTEXPR(impl_runtime().is_owned(ptr), "invalid pointer");
+            SBMR_ASSERTM_CONSTEXPR(impl_runtime().is_allocated(ptr) != -1, "double free");
 
             // perform de-allocation
-            auto token = m_runtime.is_allocated(ptr);
-            m_runtime.return_block_unchecked(token);
+            auto token = impl_runtime().is_allocated(ptr);
+            impl_runtime().return_block_unchecked(token);
         }
 
         // de-allocates the storage pointed to by ptr
@@ -441,12 +442,12 @@ namespace sbmr {
             if (std::is_constant_evaluated())
             {
                 // check pre-conditions
-                SBMR_ASSERTM_CONSTEVAL(m_consteval.is_maybe_allocated(ptr), "invalid pointer");
-                SBMR_ASSERTM_CONSTEVAL(m_consteval.is_allocated(ptr, n) != -1, "invalid size");
+                SBMR_ASSERTM_CONSTEVAL(impl_consteval().is_maybe_allocated(ptr), "invalid pointer");
+                SBMR_ASSERTM_CONSTEVAL(impl_consteval().is_allocated(ptr, n) != -1, "invalid size");
 
                 // perform de-allocation
-                auto token = m_consteval.is_allocated(ptr, n);
-                m_consteval.return_ptr_unchecked(ptr, n, token);
+                auto token = impl_consteval().is_allocated(ptr, n);
+                impl_consteval().return_ptr_unchecked(ptr, n, token);
             }
             // allocated using m_runtime
             else
@@ -456,16 +457,16 @@ namespace sbmr {
                 //   come from other deallocate function
 
                 // check zero block (already checked nullptr)
-                constexpr auto *p_zero = static_cast<const void *>(impl_runtime::zero_block_ptr());
+                constexpr auto *p_zero = static_cast<const void *>(impl_runtime_type::zero_block_ptr());
                 if (ptr == p_zero) { return; }
 
                 // check pre-conditions
-                SBMR_ASSERTM_CONSTEXPR(m_runtime.is_owned(ptr), "invalid pointer");
-                SBMR_ASSERTM_CONSTEXPR(m_runtime.is_allocated(ptr) != -1, "double free");
+                SBMR_ASSERTM_CONSTEXPR(impl_runtime().is_owned(ptr), "invalid pointer");
+                SBMR_ASSERTM_CONSTEXPR(impl_runtime().is_allocated(ptr) != -1, "double free");
 
                 // perform de-allocation
-                auto token = m_runtime.is_allocated(ptr);
-                m_runtime.return_block_unchecked(token);
+                auto token = impl_runtime().is_allocated(ptr);
+                impl_runtime().return_block_unchecked(token);
             }
         }
     };

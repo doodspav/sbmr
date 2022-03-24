@@ -16,6 +16,8 @@
 #include <sbmr/_detail/integer_traits.hpp>
 #include <sbmr/_detail/optimistic_sort.hpp>
 
+#include <sbmr/_impl/chunk_resource_consteval.hpp>
+
 
 namespace sbmr::_impl {
 
@@ -24,6 +26,10 @@ namespace sbmr::_impl {
     // it only works in terms of unsigned char*, and reinterpret_cast is not
     //   available at compile time, so usage of the memory at compile time is
     //   quite limited (although not completely unavailable)
+
+    // chunk_resource_consteval is a member here rather than in chunk_resource
+    //   to avoid extra padding due to alignment
+    // composition is used over inheritance to guarantee member order
 
     template <chunk_options Opts>
         requires ValidChunkOptions<Opts.normalized()>
@@ -74,6 +80,18 @@ namespace sbmr::_impl {
         // special block whose address is to be returned when allocating 0 bytes
         // its value should never be accessed
         static constexpr block_type _s_zero_block {};
+
+        // consteval implementation
+        // NOT used in this implementation
+        // it is purely here so that extra padding is avoided, which would be
+        //   present if it were put in chunk_resource instead
+        chunk_resource_consteval m_consteval;
+
+        // friend _impl::chunk_resource since we will be using composition
+        //   rather than inheritance (to guaranteed member order)
+        template <chunk_options Opts_>
+            requires ValidChunkOptions<Opts_.normalized()>
+        friend class chunk_resource;
 
     public:
 

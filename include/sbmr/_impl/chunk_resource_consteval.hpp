@@ -19,8 +19,8 @@ namespace sbmr::_impl {
     // it defers to std::allocator at compile time, and does nothing at runtime
     // it is only intended to be used at compile time, and it is UB to use any
     //   member functions at runtime (other than constructor and destructor)
-    // there are no "block" based restrictions in this class; it is up to the
-    //   user of the class to implement such restrictions
+    // there are no allocation limits in this class; it is up to the user of
+    //   this class to implement such restrictions
 
     class chunk_resource_consteval
     {
@@ -55,6 +55,7 @@ namespace sbmr::_impl {
 
     public:
 
+        // UB to call at runtime
         // number of allocations currently not de-allocated
         [[nodiscard]] constexpr std::size_t
         allocation_count() const noexcept
